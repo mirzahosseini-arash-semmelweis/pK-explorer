@@ -1,0 +1,15 @@
+name: titr_quarto
+title: titr_quarto
+username: pdujnv-mirzahosseini0arash0semmelweis
+account: pdujnv-mirzahosseini0arash0semmelweis
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 13422923
+bundleId: 9805559
+url: https://pdujnv-mirzahosseini0arash0semmelweis.shinyapps.io/titr_quarto/
+version: 1
+quarto_version: 1.6.37
+quarto_engines: knitr
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .RData|acid_base_systems_2023-12-17.pdf|benchmark.R|enol.R|pK_explorer/app.R|pufferkapacitas.R|Rplots.pdf|test1.html|test1.qmd|titr_quarto_20241217.html|titr_quarto_20241217.qmd|titr_quarto_20250215.qmd|titr_quarto_test.html|titr_quarto_test_deprecated.qmd|titr_quarto_test2.html|titr_quarto_v2.html|titr_quarto_v2.qmd|titr1.R|titr2.R|todo.txt|test1_files|titr_quarto_20241217_files|titr_quarto_test_files|titr_quarto_test2_files|titr_quarto_v2_files

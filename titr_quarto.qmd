@@ -1,0 +1,1011 @@
+---
+title: "pK explorer"
+format:
+  dashboard:
+    scrolling: true
+    orientation: columns
+    theme: darkly
+server: shiny
+---
+
+```{r}
+#| context: setup
+#| include: false
+library(shiny)
+library(shinysurveys)
+library(shinyjs)
+library(ggplot2)
+library(plotly)
+library(ggtext)
+library(tidyverse)
+library(dplyr)
+library(ggthemes)
+library(ggrepel)
+library(signs)
+library(nleqslv)
+library(htmltools)
+```
+
+#  {.sidebar}
+
+```{r}
+selectInput("n", "Number of acid/base sites", c(1:10))
+sliderInput("z",
+            "Charge of completely protonated species:",
+            min = 0,
+            max = 10,
+            step = 1,
+            value = 0,
+            ticks = FALSE)
+```
+
+H~`r htmlOutput("Hn", inline = TRUE)`~A^`r htmlOutput("Az", inline = TRUE)`^
+
+```{r}
+numberInput("c_T", "Concentration of analyte (mol/L):",
+            value = 0.1, min = 0, max = 1, step = 0.1)
+selectInput("dilution", "Ignore dilution during titration?",
+            choices = c("Do not ignore", "Ignore", "Overlay both"),
+            selected = "Do not ignore")
+tags$div(id = "blah_container")
+uiOutput("pKa")
+checkboxInput("activity", "Show activity correction", value = FALSE)
+```
+
+# Acid-Base
+
+## {.tabset}
+
+### Graphs
+
+```{r, height = "500px"}
+#| title: Titration curve
+plotlyOutput("titrPlot")
+```
+
+<p><small>If it is assumed during titration that the volume does not change, it is as if solid $\textrm{NaOH}$ is being added while the concentration of the analyte remains constant. If dulition is **not ignored**, then $V$ mL of $c_B$ mol/L $\textrm{NaOH}$ solution is added during titration and the concentration of the analyte is ever decreasing, thus giving rise to the difference between the titration curves.</small></p>
+
+```{r, height = "500px"}
+#| title: Buffer intensity of solution
+plotlyOutput("bufferPlot")
+```
+
+```{r, height = "500px"}
+#| title: Ionic strength during titration
+plotlyOutput("activityPlot")
+```
+
+```{r, height = "500px"}
+#| title: Distribution of protonation species
+plotlyOutput("speciesPlot")
+```
+
+```{r, height = "500px"}
+#| title: Distribution of average charge of species
+plotlyOutput("chargePlot")
+```
+
+```{r}
+#| context: server
+n <- reactive({as.integer(input$n)})
+
+observe({
+  updateSliderInput(
+    session, 
+    "z", 
+    max = n(),
+  )
+})
+
+UI_exists = FALSE
+
+observeEvent(input[["dilution"]], {
+  if(!UI_exists && input$dilution != "Ignore") {
+    insertUI(selector = "#blah_container",
+             where = "afterEnd",
+             ui = numberInput("c_B", "Concentration of titrant NaOH (mol/L):",
+                              value = 1, min = 0, max = 1, step = 0.1))
+    UI_exists <<- TRUE
+  }
+})
+
+observeEvent({input$dilution}, {
+  if(input$dilution == "Ignore") {
+    removeUI(selector = "div:has(> #c_B)")
+    UI_exists <<- FALSE
+  }
+})
+
+output$Hn <- renderText({
+  if(input$n == 1) {NULL} else {input$n}
+})
+
+output$Az <- renderText({
+  if(input$z == 0) {NULL} else {
+    if(input$z == 1) {"+"} else {paste(input$z, "+")}
+  }
+})
+
+output$pKa <- renderUI({
+  n <- input$n
+  lapply(1:n, function(i) {
+    numericInput(inputId = paste0("pKa", i),
+                 label = HTML(paste0("p", tags$em("K"), tags$sub("a"), tags$sub(i))),
+                 value = i,
+                 min = 0)
+  })
+})
+
+nsim <- reactive({1401})
+z <- reactive({as.integer(input$z)})
+c_T <- reactive({input$c_T})
+c_B <- reactive({input$c_B})
+pKa <- reactive({
+  na.omit(
+    c(input$pKa1, input$pKa2, input$pKa3, input$pKa4, input$pKa5,
+      input$pKa6, input$pKa7, input$pKa8, input$pKa9, input$pKa10)
+  )
+})
+pB <- reactive({
+  c(
+    pKa()[n()],
+    pKa()[n()] + pKa()[n() - 1],
+    pKa()[n()] + pKa()[n() - 1] + pKa()[n() - 2],
+    pKa()[n()] + pKa()[n() - 1] + pKa()[n() - 2] + pKa()[n() - 3],
+    pKa()[n()] + pKa()[n() - 1] + pKa()[n() - 2] + pKa()[n() - 3] + pKa()[n() - 4],
+    pKa()[n()] + pKa()[n() - 1] + pKa()[n() - 2] + pKa()[n() - 3] + pKa()[n() - 4] +
+      pKa()[n() - 5],
+    pKa()[n()] + pKa()[n() - 1] + pKa()[n() - 2] + pKa()[n() - 3] + pKa()[n() - 4] +
+      pKa()[n() - 5] + pKa()[n() - 6],
+    pKa()[n()] + pKa()[n() - 1] + pKa()[n() - 2] + pKa()[n() - 3] + pKa()[n() - 4] +
+      pKa()[n() - 5] + pKa()[n() - 6] + pKa()[n() - 7],
+    pKa()[n()] + pKa()[n() - 1] + pKa()[n() - 2] + pKa()[n() - 3] + pKa()[n() - 4] +
+      pKa()[n() - 5] + pKa()[n() - 6] + pKa()[n() - 7] + pKa()[n() - 8],
+    pKa()[n()] + pKa()[n() - 1] + pKa()[n() - 2] + pKa()[n() - 3] + pKa()[n() - 4] +
+      pKa()[n() - 5] + pKa()[n() - 6] + pKa()[n() - 7] + pKa()[n() - 8] + pKa()[n() - 9]
+  )
+})
+pH <- reactive({seq(0, 14, length = nsim())})
+H <- reactive({10^-pH()})
+w <- reactive({1.01e-14/H() - H()})
+c_i <- reactive({
+  cbind(1, 10^t(pB() - t(pH() %*% t(c(1:n())))))
+})
+a_H <- reactive({rowSums(c_i())})
+X <- reactive({c_i()/a_H()})
+Y <- reactive({X() %*% c(n():0)})
+c_NaOH <- reactive({c_T()*Y() + w()})
+V <- reactive({as.vector(1000*(c_T()*Y() + w())/(c_B() - w()))})
+c_NaOH_ <- reactive({c_B()*V()/(1000 + V())})
+c_spec <- reactive({c_T()*Y()})
+I_spec <- reactive({((c_T()*X()) %*% c((z() - n()):(z()))^2) + z()^2*c_T()}) #works until here
+xstart <- reactive({list(c(0.5, 0.5, 0.1, 0.1))})
+fun1 <- reactive({
+  function(c_spec, I_spec, H, xstart) {
+    slv_fun1 <-
+      function(x) {
+        y <- numeric(4)
+        y[1] <- c_spec + 1.01e-14/(H*x[2]) - H/x[1] - x[3]
+        y[2] <- log10(x[1]) + 0.5085*(sqrt(x[4])/(1 + 3.281*0.9*sqrt(x[4])))
+        y[3] <- log10(x[2]) + 0.5085*(sqrt(x[4])/(1 + 3.281*0.35*sqrt(x[4])))
+        y[4] <- I_spec + 1.01e-14/(H*x[2]) + H/x[1] + abs(x[3]) - 2*x[4]
+        y
+        #y[1] = gamma_H+; y[2] = gamma_OH-; y[3] = c_NaOHa; y[4] = I
+      }
+    nleqslv(xstart, slv_fun1)$x
+  }
+})
+result <- reactive({
+  t(mapply(fun1(), c_spec = c_spec(), I_spec = I_spec(), H = H(), xstart = xstart()))
+})
+c_NaOHa <- reactive({as.vector(result()[, 3])})
+xstart_ <- reactive({list(c(0.5, 0.5, 10, 0.1))})
+X_ <- reactive({split(X(), row(X()))})
+fun_2 <- reactive({
+  function(c_spec, H, X_, xstart_, c_B, c_T, z, n) {
+    slv_fun2 <- function(x) {
+      y <- numeric(4)
+      y[1] <- c_spec*(1e3/(1e3 + x[3])) + 1.01e-14/(H*x[2]) - H/x[1] -
+              c_B*(x[3]/(1e3 + x[3]))
+      y[2] <- log10(x[1]) + 0.5085*(sqrt(x[4])/(1 + 3.281*0.9*sqrt(x[4])))
+      y[3] <- log10(x[2]) + 0.5085*(sqrt(x[4])/(1 + 3.281*0.35*sqrt(x[4])))
+      y[4] <- ((abs(c_T*(1e3/(1e3 + x[3])))*X_) %*% c((z - n):(z))^2) +
+              z^2*abs(c_T*(1e3/(1e3 + x[3]))) + 1.01e-14/(H*x[2]) + H/x[1] +
+              abs(c_B*(x[3]/(1e3 + x[3]))) - 2*x[4]
+      y
+      #y[1] = gamma_H+_; y[2] = gamma_OH-_; y[3] = c_NaOHa_; y[4] = I_
+    }
+    nleqslv(xstart_, slv_fun2)$x
+  }
+})
+result_ <- reactive({
+  t(mapply(fun_2(), c_spec = c_spec(), H = H(), X_ = X_(), xstart_ = xstart_(),
+           c_B = c_B(), c_T = c_T(), z = z(), n = n()))
+})
+Va <- reactive({as.vector(result_()[, 3])})
+c_NaOHa_ <- reactive({c_B()*Va()/(1000 + Va())})
+
+output$titrPlot <- renderPlotly({
+  n <- n()
+  pH <- pH()
+  c_B <- c_B()
+  c_T <- c_T()
+  c_NaOH <- c_NaOH()
+  V <- V()
+  c_NaOH_ <- c_NaOH_()
+  data <- data.frame(c_NaOH = c_NaOH, c_NaOH_ = c_NaOH_, V = V, pH = pH)
+  data <- data %>% filter(pH < (14 + log10(c_B)))
+  data <- data %>% filter(pH > (-log10(c_B)))
+  data.long <- data %>% select(c("c_NaOH", "c_NaOH_", "pH")) %>%
+    rename("ignoring dilution" = c_NaOH, "not ignoring dilution" = c_NaOH_) %>%
+    pivot_longer(-pH, names_to = "titration", values_to = "c")
+  if(input$activity == TRUE) {
+    c_NaOHa <- c_NaOHa()
+    Va <- Va()
+    c_NaOHa_ <- c_NaOHa_()
+    dataa <- data.frame(c_NaOHa = c_NaOHa, c_NaOHa_ = c_NaOHa_, Va = Va, pH = pH)
+    dataa <- dataa %>% filter(pH < (14 + log10(c_B)))
+    dataa <- dataa %>% filter(pH > (-log10(c_B)))
+    data.longa <- dataa %>% select(c("c_NaOHa", "c_NaOHa_", "pH")) %>%
+      rename("ignoring dilution" = c_NaOHa, "not ignoring dilution" = c_NaOHa_) %>%
+      pivot_longer(-pH, names_to = "titration", values_to = "c")
+  }
+  
+  titrPlot_c <- ggplot(data, aes(x = c_NaOH, y = pH)) +
+    geom_line(col = "#800026", linewidth = 0.75) +
+    theme_classic() +
+    labs(x = "<i>c</i><sub>NaOH</sub> (mol/L)",
+         title = "Titration begins from solution of the completely protonated ligand.
+         Negative amount of NaOH corresponds to added HCl.") +
+    theme(axis.title.x = element_markdown(),
+          plot.title = element_text(hjust = 0, size = 8, face = "italic")) +
+    scale_y_continuous(breaks = seq(0, 14, 2)) +
+    scale_x_continuous(limits = c(min(data$c_NaOH), max(data$c_NaOH)),
+                       n.breaks = 10, labels = signs_format()) +
+    geom_segment(aes(x = n*c_T, xend = n*c_T,
+                     y = 0, yend = mean(data$pH[which(abs(data$c_NaOH - n*c_T) < 5e-2)])),
+                 color = "grey", linetype = "dashed", linewidth = 0.25) +
+    annotate(geom = "text", x = n*c_T, y = 0, label = "equivalence point",
+             color = "darkgrey", size = 3, fontface = "serif")
+  if(input$activity == TRUE) {
+    titrPlot_c <- titrPlot_c + geom_line(data = dataa, aes(x = c_NaOHa, y = pH),
+                                         col = "#800026", linetype = "dashed", alpha = 0.5) +
+                               annotate(geom = "text", x = 0, y = 14.1,
+                                        label = "Dashed curve shows activity correction.",
+                                        size = 2)      
+  }
+  
+  titrPlot_V <- ggplot(data, aes(x = V, y = pH)) +
+    geom_line(col = "#800026", linewidth = 0.75) +
+    theme_classic() +
+    labs(x = "<i>V</i><sub>NaOH</sub> (mL)",
+         title = "Titration begins from 1 L solution of the completely protonated ligand.
+         Negative amount of NaOH corresponds to added HCl.") +
+    theme(axis.title.x = element_markdown(),
+          plot.title = element_text(hjust = 0, size = 8, face = "italic")) +
+    scale_y_continuous(breaks = seq(0, 14, 2)) +
+    scale_x_continuous(limits = c(V[1],
+                                  mean(data$V[which(abs(data$pH - 0.97*(14 + log10(c_B))) < 1e-2)])),
+                       labels = signs_format()) +
+    geom_segment(aes(x = 1e3*n*c_T/c_B, xend = 1e3*n*c_T/c_B,
+                     y = 0, yend = mean(data$pH[which(abs(data$V - 1e3*n*c_T/c_B) < 5e-2)])),
+                 color = "grey", linetype = "dashed", linewidth = 0.25) +
+    annotate(geom = "text", x = 1e3*n*c_T/c_B, y = 0,
+             label = "equivalence point", color = "darkgrey", size = 3, fontface = "serif")
+  if(input$activity == TRUE) {
+    titrPlot_V <- titrPlot_V + geom_line(data = dataa, aes(x = Va, y = pH),
+                                         col = "#800026", linetype = "dashed", alpha = 0.5) +
+                               annotate(geom = "text", x = 0, y = 14.1,
+                                        label = "Dashed curve shows activity correction.",
+                                        size = 2)
+  }
+  
+  titrPlot_both <- ggplot(data.long, aes(x = c, y = pH, color = titration)) +
+    geom_line(linewidth = 0.75) +
+    theme_classic() +
+    labs(x = "<i>c</i><sub>NaOH</sub> (mol/L)",
+         title = "Titration begins from 1 L solution of the completely protonated ligand.
+         Negative amount of NaOH corresponds to added HCl.") +
+    theme(axis.title.x = element_markdown(),
+          plot.title = element_text(hjust = 0, size = 8, face = "italic"),
+          legend.position = c(0.75, 0.25)) +
+    scale_y_continuous(breaks = seq(0, 14, 2)) +
+    scale_x_continuous(limits = c(min(data$c_NaOH), max(data$c_NaOH)),
+                       n.breaks = 10, labels = signs_format()) +
+    scale_color_brewer(palette = "Set1")
+  if(input$activity == TRUE) {
+    titrPlot_both <- titrPlot_both + geom_line(data = data.longa,
+                                               aes(x = c, y = pH, color = titration),
+                                               linetype = "dashed", alpha = 0.5) +
+                                     annotate(geom = "text", x = 0, y = 14.1,
+                                              label = "Dashed curve shows activity correction.",
+                                              size = 2)
+  }
+  
+  switch(as.character(input$dilution),
+         "Ignore" = ggplotly(titrPlot_c),
+         "Do not ignore" = ggplotly(titrPlot_V),
+         "Overlay both" = ggplotly(titrPlot_both))
+})
+
+output$bufferPlot <- renderPlotly({
+  n <- n()
+  pKa <- pKa()
+  pH <- pH()
+  c_B <- c_B()
+  c_T <- c_T()
+  c_NaOH <- c_NaOH()
+  V <- V()
+  c_NaOH_ <- c_NaOH_()
+  dpH <- 0.01
+  data <- data.frame(c_NaOH = c_NaOH, c_NaOH_ = c_NaOH_, pH = pH)
+  data <- data %>% filter(pH < (14 + log10(c_B)))
+  data <- data %>% filter(pH > (-log10(c_B)))
+  data$B_c <- c(diff(data$c_NaOH)/dpH, NA)
+  data$B_V <- c(diff(data$c_NaOH_)/dpH, NA)
+  data.long <- data %>% select(c("B_c", "B_V", "pH")) %>%
+    rename("ignoring dilution" = B_c, "not ignoring dilution" = B_V) %>%
+    pivot_longer(-pH, names_to = "titration", values_to = "B")
+  if(input$activity == TRUE) {
+    c_NaOHa <- c_NaOHa()
+    Va <- Va()
+    c_NaOHa_ <- c_NaOHa_()
+    dataa <- data.frame(c_NaOHa = c_NaOHa, c_NaOHa_ = c_NaOHa_, pH = pH)
+    dataa <- dataa %>% filter(pH < (14 + log10(c_B)))
+    dataa <- dataa %>% filter(pH > (-log10(c_B)))
+    dataa$B_ca <- c(diff(dataa$c_NaOHa)/dpH, NA)
+    dataa$B_Va <- c(diff(dataa$c_NaOHa_)/dpH, NA)
+    dataa$B_Va[1350:length(dataa$B_Va)] <- NA
+    data.longa <- dataa %>% select(c("B_ca", "B_Va", "pH")) %>%
+      rename("ignoring dilution" = B_ca, "not ignoring dilution" = B_Va) %>%
+      pivot_longer(-pH, names_to = "titration", values_to = "B")
+  }
+  
+  bufferPlot_c <- ggplot(data, aes(x = pH, y = B_c)) +
+    geom_line(col = "navyblue", linewidth = 0.75) +
+    theme_classic() +
+    labs(x = "pH",
+         y = "Buffer intensity (mol/L)") +
+    scale_x_continuous(breaks = seq(0, 14, 2)) +
+    scale_y_continuous(limits = c(0, 0.1 + mean(data$B_c[which(abs(pH - pKa[1]) < 1e-2)])),
+                       n.breaks = 5, labels = signs_format())
+  if(input$activity == TRUE) {
+    bufferPlot_c <- bufferPlot_c + geom_line(data = dataa, aes(x = pH, y = B_ca),
+                                             col = "navyblue", linewidth = 0.75,
+                                             linetype = "dashed", alpha = 0.5) +
+                                   annotate(geom = "text", x = 1.5, y = 0,
+                                            label = "Dashed curve shows activity correction.",
+                                            size = 2)
+  }
+  
+  bufferPlot_V <- ggplot(data, aes(x = pH, y = B_V)) +
+    geom_line(col = "navyblue", linewidth = 0.75) +
+    theme_classic() +
+    labs(x = "pH",
+         y = "Buffer intensity (mol/L)") +
+    scale_x_continuous(breaks = seq(0, 14, 2)) +
+    scale_y_continuous(limits = c(0, 0.1 + mean(data$B_V[which(abs(pH - pKa[1]) < 1e-2)])),
+                       n.breaks = 5, labels = signs_format())
+  if(input$activity == TRUE) {
+    bufferPlot_V <- bufferPlot_V + geom_line(data = dataa, aes(x = pH, y = B_Va),
+                                             col = "navyblue", linewidth = 0.75,
+                                             linetype = "dashed", alpha = 0.5) +
+                                   annotate(geom = "text", x = 1.5, y = 0,
+                                            label = "Dashed curve shows activity correction.",
+                                            size = 2)      
+  }
+  
+  bufferPlot_both <- ggplot(data.long, aes(x = pH, y = B, color = titration)) +
+    geom_line(linewidth = 0.75) +
+    theme_classic() +
+    labs(x = "pH",
+         y = "Buffer intensity (mol/L)") +
+    theme(legend.position = c(0.75, 0.25),
+          axis.title.y = element_text(size = 7)) +
+    scale_x_continuous(breaks = seq(0, 14, 2)) +
+    scale_y_continuous(limits = c(0, 0.1 + mean(data.long$B[which(abs(pH - pKa[1]) < 1e-2)])),
+                       n.breaks = 5, labels = signs_format()) +
+    scale_color_brewer(palette = "Paired")
+  if(input$activity == TRUE) {
+    bufferPlot_both <- bufferPlot_both + geom_line(data = data.longa,
+                                                   aes(x = pH, y = B, color = titration),
+                                                   linetype = "dashed",
+                                                   alpha = 0.5) +
+                                         annotate(geom = "text", x = 1.5, y = 0,
+                                                  label = "Dashed curve shows activity correction.",
+                                                  size = 2)      
+  }
+  
+  switch(as.character(input$dilution),
+         "Ignore" = ggplotly(bufferPlot_c),
+         "Do not ignore" = ggplotly(bufferPlot_V),
+         "Overlay both" = ggplotly(bufferPlot_both))
+})
+
+output$activityPlot <- renderPlotly({
+  n <- n()
+  z <- z()
+  c_T <- c_T()
+  c_B <- c_B()
+  pH <- pH()
+  H <- H()
+  X <- X()
+  c_NaOH <- c_NaOH()
+  c_NaOH_ <- c_NaOH_()
+  I <- ((c_T*X/2) %*% c((z - n):(z))^2) + z^2*c_T/2 + (1.01e-14/H)/2 +
+       H/2 + abs(c_NaOH/2)
+  I_ <- ((c_T*X/2) %*% c((z - n):(z))^2) + z^2*c_T/2 + (1.01e-14/H)/2 +
+        H/2 + abs(c_NaOH_/2)
+  data <- data.frame(I = I, I_ = I_, pH = pH)
+  data <- data %>% filter(pH < (14 + log10(c_B)))
+  data <- data %>% filter(pH > (-log10(c_B)))
+  data.long <- data %>% 
+    rename("ignoring dilution" = I, "not ignoring dilution" = I_) %>%
+    pivot_longer(-pH, names_to = "titration", values_to = "I")
+  if(input$activity == TRUE) {
+    g_H <- as.vector(result()[, 1])
+    Ia <- as.vector(result()[, 4])
+    g_H_ <- as.vector(result_()[, 1])
+    Ia_ <- as.vector(result_()[, 4])
+    dataa <- data.frame(g_H = g_H, g_H_ = g_H_, Ia = Ia, Ia_ = Ia_, pH = pH)
+    dataa <- dataa %>% filter(pH < (14 + log10(c_B)))
+    dataa <- dataa %>% filter(pH > (-log10(c_B)))
+    data.longa <- data.frame(pH = rep(dataa$pH, 2))
+    data.longa$titration <- c(rep("ignoring dilution", nrow(dataa)),
+                              rep("not ignoring dilution", nrow(dataa)))
+    data.longa$Ia <- c(dataa$Ia, dataa$Ia_)
+    data.longa$g_H <- c(dataa$g_H, dataa$g_H_)
+  
+  }
+  
+  activityPlot_c <- ggplot(data, aes(x = pH, y = I)) +
+    geom_line(col = "#2B1700", linewidth = 0.75) +
+    theme_classic() +
+    labs(x = "pH",
+         y = "Ionic strength (mol/L)") +
+    scale_x_continuous(breaks = seq(0, 14, 2)) +
+    scale_y_continuous(labels = signs_format())
+  if(input$activity == TRUE) {
+    activityPlot_c <- activityPlot_c + geom_line(data = dataa, aes(x = pH, y = Ia),
+                                                 col = "#2B1700", linewidth = 0.75,
+                                                 linetype = "dashed", alpha = 0.5) +
+                                       annotate(geom = "text", x = 1.5, y = 0,
+                                                label = "Dashed curve shows activity correction.",
+                                                size = 2) +
+                                       geom_line(data = dataa, aes(x = pH, y = g_H),
+                                                 col = "chartreuse", linewidth = 0.5) +
+                                       annotate(geom = "text", x = 7, y = 1,
+                                                label = "Activity coefficient of H<sup>+</sup>",
+                                                size = 3, col = "chartreuse")
+  }
+  
+  activityPlot_V <- ggplot(data, aes(x = pH, y = I_)) +
+    geom_line(col = "#2B1700", linewidth = 0.75) +
+    theme_classic() +
+    labs(x = "pH",
+         y = "Ionic strength (mol/L)") +
+    scale_x_continuous(breaks = seq(0, 14, 2)) +
+    scale_y_continuous(labels = signs_format())
+  if(input$activity == TRUE) {
+    activityPlot_V <- activityPlot_V + geom_line(data = dataa, aes(x = pH, y = Ia_),
+                                                 col = "#2B1700", linewidth = 0.75,
+                                                 linetype = "dashed", alpha = 0.5) +
+                                       annotate(geom = "text", x = 1.5, y = 0,
+                                                label = "Dashed curve shows activity correction.",
+                                                size = 2) +
+                                       geom_line(data = dataa, aes(x = pH, y = g_H_),
+                                                 col = "chartreuse", linewidth = 0.5) +
+                                       annotate(geom = "text", x = 7, y = 1,
+                                                label = "Activity coefficient of H<sup>+</sup>",
+                                                size = 3, col = "chartreuse")
+  }
+  
+  activityPlot_both <- ggplot(data.long, aes(x = pH, y = I, color = titration)) +
+    geom_line(linewidth = 0.75) +
+    theme_classic() +
+    labs(x = "pH",
+         y = "Ionic strength (mol/L)") +
+    theme(legend.position = c(0.75, 0.25),
+          axis.title.y = element_text(size = 7)) +
+    scale_x_continuous(breaks = seq(0, 14, 2)) +
+    scale_y_continuous(labels = signs_format()) +
+    scale_color_brewer(palette = "Red-Yellow")
+  if(input$activity == TRUE) {
+    activityPlot_both <- activityPlot_both + geom_line(data = data.longa,
+                                                       aes(x = pH, y = Ia, color = titration),
+                                                       linetype = "dashed",
+                                                       alpha = 0.5) +
+                                             annotate(geom = "text", x = 1.5, y = 0,
+                                                      label = "Dashed curve shows activity correction.",
+                                                      size = 2) +
+                                             geom_line(data = data.longa,
+                                                       aes(x = pH, y = g_H, group = titration),
+                                                       linewidth = 0.5, col = "chartreuse") +
+                                             annotate(geom = "text", x = 7, y = 1,
+                                                      label = "Activity coefficient of H<sup>+</sup>",
+                                                      size = 3, col = "chartreuse")
+  }
+  
+  switch(as.character(input$dilution),
+         "Ignore" = ggplotly(activityPlot_c),
+         "Do not ignore" = ggplotly(activityPlot_V),
+         "Overlay both" = ggplotly(activityPlot_both))
+})
+
+output$speciesPlot <- renderPlotly({
+  n <- n()
+  pH <- pH()
+  X <- X()
+  df <- data.frame(X = X, pH = pH)
+  label_n <- vector(length = n + 1)
+  for(i in n:2) {label_n[n - i + 1] <- i}
+  label_n[n] <- ""
+  label_n[n + 1] <- ""
+  label_H <- vector(length = n + 1)
+  for(i in n:0) {label_H[n - i + 1] <- "H"}
+  label_H[n + 1] <- ""
+  z <- z()
+  charge <- vector(length = n + 1)
+  for(i in n:0) {
+    if (z - (n - i) > 0) {charge[n - i + 1] <- paste0(z - (n - i), "+")}
+    if (z - (n - i) < 0) {charge[n - i + 1] <- paste0(z - (n - i), "\u2212")}
+    if (z - (n - i) == 0) {charge[n - i + 1] <- paste0("")}
+  }
+  charge <- gsub("1\\+", "+", charge)
+  charge <- gsub("-", "", charge)
+  charge <- gsub("1\u2212", "\u2212", charge)
+  vars <- vector()
+  for(i in 1:(n + 1)) {
+    vars[i] <- HTML(paste0(label_H[n + 2 - i],
+                           if(label_n[n + 2 - i] == "") {tags$span()} else {tags$sub(label_n[n + 2 - i])},
+                           "A",
+                           tags$sup(charge[n + 2 - i])))
+  }
+  colnames(df)[1:(n + 1)] <- vars
+  df.long <- df %>% select(c(vars, "pH")) %>%
+    pivot_longer(-pH, names_to = "species", values_to = "value")
+  speciesPlot <- ggplot(df.long, aes(x = pH, y = value, color = species)) +
+    geom_line() +
+    theme_classic() +
+    labs(x = "pH",
+         y = "Relative abundance") +
+    scale_x_continuous(breaks = seq(0, 14, 2)) +
+    scale_y_continuous(n.breaks = 5, labels = signs_format())
+  ggplotly(speciesPlot)
+})
+
+output$chargePlot <- renderPlotly({
+  n <- n()
+  z <- z()
+  pH <- pH()
+  X <- X()
+  q <- X %*% c((z - n):(z))
+  q <- data.frame(q = q, pH = pH)
+  ymin <- min(q$q)
+  ymax <- max(q$q)
+  chargePlot <- ggplot(q, aes(x = pH, y = q)) +
+    geom_rect(aes(xmin = 0, xmax = 14, ymin = 0, ymax = ymax),
+              fill = "pink", show.legend = FALSE) +
+    geom_rect(aes(xmin = 0, xmax = 14, ymin = ymin, ymax = 0),
+              fill = "lightblue", show.legend = FALSE) +
+    geom_line() +
+    labs(x = "pH",
+         y = "Average charge") +
+    scale_x_continuous(breaks = seq(0, 14, 2)) +
+    scale_y_continuous(n.breaks = 5, labels = signs_format())
+  ggplotly(chargePlot)
+})
+```
+
+### Equations
+
+The core equations for calculating protonation species concentrations (molar concentrations ($c_i$ mol/L) are depicted by writing the species in square brackets) in the aqueous solution are the following:
+
+{1} Ion-product of water
+
+$$K_w = [\textrm{H}^+] \cdot [\textrm{OH}^-]$$
+
+- Autoprotolysis of water; water ion product value assumed to be $1.01 \cdot 10^{-14}$ for $25$ B0C and saturated vapor pressure [*William L. et al.* (1981)](https://doi.org/10.1063/1.555643).
+
+{2} Acid dissociation constant
+
+$$K_{a,i} = \frac{[\textrm{H}_{n - i}\textrm{A}^{z - i}] \cdot [\textrm{H}^+]}{[\textrm{H}_{n - i + 1}\textrm{A}^{z - i + 1}]}$$
+
+-   Equilibrium constant of *i*th proton dissociation step (acid dissociation constant) of completely protonated species $\textrm{H}_{n}\textrm{A}^{z}, z \in \{0, ..., n\}$.
+
+-   The presence of permanent charges on the species is disregarded, hence the bounds of $z$.
+
+{3} Ionization fractions
+
+$$\chi_i = \frac{[\textrm{H}_{i}\textrm{A}^{z - n + i}]}{c_T} = \frac{\frac{[\textrm{H}^+]^i}{K_{a,n} \cdot ... \cdot K_{a,n - i + 1}}}{\alpha_{\textrm{H}}}$$
+
+$$\alpha_{\textrm{H}} = 1 + \frac{[\textrm{H}^+]}{K_{a,n}} + \frac{[\textrm{H}^+]^2}{K_{a,n} \cdot K_{a,n - 1}}+...+\frac{[\textrm{H}^+]^n}{K_{a,n} \cdot ... \cdot K_{a,1}}$$
+
+-   Ionization fractions (i.e. relative abundance) of protonation species; $\chi_i$ expressions are combination of acid dissociation constants and mass balance: $c_T = [\textrm{H}_{n}\textrm{A}^{z}] + [\textrm{H}_{n - 1}\textrm{A}^{z - 1}] + ... + [\textrm{A}^{z - n}]$, where $c_T$ is the total concentration of the analyte (*titrand*).
+
+-   $\chi_0$ is equal to $\frac{1}{\alpha_{\textrm{H}}}$ by definition.
+
+{4} Ion charge balance
+
+$$[\textrm{Na}^+] + [\textrm{H}^+] = (-z) \cdot [\textrm{H}_{n}\textrm{A}^{z}] + (1 - z) \cdot [\textrm{H}_{n - 1}\textrm{A}^{z - 1}] + ... + (n - z) \cdot [\textrm{A}^{z - n}] + [\textrm{OH}^-] + z \cdot [\textrm{X}^-]$$
+
+-   Due to ion charge balance, the positive charges must equal the negative charges in the solution.
+
+-   $\textrm{Na}^+$ ions come from added $\textrm{NaOH}$ (*titrant*), therefore it is equal to $c_B$ (total base concentration); the case when $c_B$ is negative corresponds to $\textrm{HCl}$ and hence is equivalent to $c_A$, while $[\textrm{Na}^+]$ represents $-[\textrm{Cl}^-]$.
+
+-   The charge of the protonation species depends on the values of $n$ and $z$; since the titration always begins from the solution of the completely protonated species (i.e. $\textrm{H}_{n}\textrm{A}^{z+}(\textrm{X}^-)_z$) a counterion is required for $z > 0$, and $[\textrm{X}^-]$ will be equal to $z \cdot c_T$.
+
+{5} The combination of the equations above gives rise to the unified equation for simulating titration curves:
+
+$$c_B = c_T \cdot (0 \cdot \chi_n + 1 \cdot \chi_{n - 1} + ... + n \cdot \chi_{0}) + \frac{K_w}{[\textrm{H}^+]} - [\textrm{H}^+]$$
+
+-   Note that the $[\textrm{X}^-]$ term cancels out.
+
+{6} If dilution during the titration is considered, equation {5} is modified as such (assuming $V$ mL of $c_{B,0}$ mol/L titrant is added to $1$ L of $c_{T,0}$ mol/L titrand):
+
+$$c_{B,0} \cdot \frac{V}{10^3 + V} = c_{T,0} \cdot \frac{10^3}{10^3 + V} \cdot (0 \cdot \chi_n + 1 \cdot \chi_{n - 1} + ... + n \cdot \chi_{0}) + \frac{K_w}{[\textrm{H}^+]} - [\textrm{H}^+]$$
+
+-   From equation {6} $V$ can be expressed and actual $c_B(V) = c_{B,0} \cdot \frac{V}{10^3 + V}$ calculated.
+
+{7} The buffer intensity ($\beta$ in mol/L) of the solution is defined as the derivative: 
+
+$$\beta = \frac{\textrm{d}c_B}{\textrm{dpH}}$$
+
+-   $\textrm{pH}$ can be expressed as $\textrm{pH} = -\textrm{log}_{10}[\textrm{H}^+]$, although in this formula $[\textrm{H}^+]$ should be technically divided by the unit of molar concentration ($1$ mol/L).
+
+{8} Finally, the average charge is calculated by the weighed average of the ionization fractions with the charge of the species being the weights:
+
+$$\bar{q} = \sum_{i = 0}^{n} (z - n + i) \cdot \chi_i$$
+
+---
+
+In aqueous solutions with charged species (ions) electromagnetic interaction causes the effective concentration of the species to be measured as smaller compared to their molar concentrations. This effective concentration is characterized with the dimensionless quantity called activity ($a_i$).
+
+{9}
+
+$$a_i = \gamma_i \cdot \frac{c_i}{1 \frac{\textrm{mol}}{\textrm{L}}}$$
+
+-   The activity coefficient $\gamma_i$ is also a dimensionless quantity, that can be calculated using the Debye-Hückel theory. There are several models however, which can be used to approximate the activity coefficient.
+
+{10} Debye-Hückel model (valid $< 0.01$ mol/L ionic strength)
+
+$$\textrm{log}_{10}\gamma_i = -A \cdot z_i^2 \cdot \sqrt{I}$$
+
+{11} Extended Debye-Hückel model (valid $< 1$ mol/L ionic strength)
+
+$$\textrm{log}_{10}\gamma_i = -A \cdot z_i^2 \cdot \frac{\sqrt{I}}{1 + B \cdot a_i \cdot \sqrt{I}}$$
+
+{12} Davies model (empirical, valid $< 0.5$ mol/L ionic strength)
+
+$$\textrm{log}_{10}\gamma_i = -A \cdot z_i^2 \cdot (\frac{\sqrt{I}}{1 + \sqrt{I}} - 0.3 \cdot I)$$
+
+-   $z_i$ is the charge of species $i$ and $I$ is ionic strength (defined with molar concentrations of the species found in the aqueous solution: $I = \frac{1}{2} \cdot \sum z_i^2 \cdot c_i$).
+
+-   The coefficients $A$ and $B$ are dependent on temperature and relative permittivity. For water at $25$ °C these [values](https://pubs.usgs.gov/tm/06/a43/pdf/tm6-A43.pdf) are $A = 0.5085$ mol<sup>-0.5</sup>∙L<sup>0.5</sup> and $B = 3.281$ mol<sup>-0.5</sup>∙L<sup>0.5</sup>∙nm<sup>-1</sup>.
+
+-   The coefficient $a_i$ is a species-specific parameter, which characterizes the empirical ionic radius of the species (not the actual ionic radius, since it contains some of the hydrate shell as well). This [value](https://search.r-project.org/CRAN/refmans/phreeqc/html/wateq4f.dat.html) for $\textrm{H}^+$ is $0.9$ nm and for $\textrm{OH}^-$ is $0.35$ nm.
+
+The three models can be compared regarding their validity and plotted on a graph below. In this work the Extended Debye-Hückel model is applied. Note how at infinitely dilute solutions (concentration approaching $0$ mol/L) the activity coefficient approaches $1$, i.e. $a_i = c_i$.
+
+```{r}
+I <- seq(0, 2, length = 1e3)
+A <- 0.5085
+B <- 3.281
+a <- 0.9
+DH <- 10^(-A*sqrt(I))
+EDH <- 10^(-A*(sqrt(I)/(1 + B*a*sqrt(I))))
+D <- 10^(-A*(sqrt(I)/(1 + sqrt(I)) - 0.3*I))
+df <- data.frame(I = I, DH = DH, EDH = EDH, D = D)
+data.long <- df %>%
+  rename("Debye-Hückel" = DH, "Extended Debye-Hückel" = EDH, "Davies" = D) %>%
+  pivot_longer(-I, names_to = "Activity model", values_to = "gamma")
+data.long$`Activity model` <- factor(data.long$`Activity model`,
+                                     levels = c("Debye-Hückel", "Extended Debye-Hückel", "Davies"))
+
+ggplot(data = data.long, aes(x = I, y = gamma, color = `Activity model`)) +
+  geom_line(linewidth = 1) +
+  theme_classic() +
+  labs(x = expression(paste("Ionic strength, ", italic(I), " (mol/L)")),
+       y = expression(paste("Activity coefficient (", gamma, ") of H"^"+")))
+```
+
+The definition of $\textrm{pH}$ uses activity of hydrogen ions instead of molar concentration.
+
+{13}
+
+$$\textrm{pH} = -\textrm{log}_{10}a_{\textrm{H}^+}$$
+
+In fact, the equilibrium constants described above also use activities:
+
+{14} Acid dissociation constant (thermodynamic parameter)
+
+$$K_{a,i} = \frac{a_{\textrm{H}_{n - i}\textrm{A}^{z - i}} \cdot a_{\textrm{H}^+}}{a_{\textrm{H}_{n - i + 1}\textrm{A}^{z - i + 1}}}$$
+
+For practical purposes however, the conditional equilibrium constants are measured in experiments.
+
+{15} Acid dissociation constant (conditional parameter)
+
+$$K_{a,i}^c = \frac{[\textrm{H}_{n - i}\textrm{A}^{z - i}] \cdot a_{\textrm{H}^+}}{[\textrm{H}_{n - i + 1}\textrm{A}^{z - i + 1}]}$$
+
+-   Note that experimentally determined acid dissociation constants are usually monitored with combined [glass electrodes](https://doi.org/10.1080/10408348108542727), that measure $\textrm{H}^+$ activity, while broadcasting mole-specific (e.g. mol/L) information on the protonation species, hence the mixed nature of the expression.
+
+Of the core equations discussed above ({1} - {4}) the ion-product of water is also affected $K_w = a_{\textrm{H}^+} \cdot a_{\textrm{OH}^-}$ (Note how $a_{H_2O}$ vanishes from the denominator of the equation since it is equal to $1$ by definition). The mass balance {3} and ion balance {4} are unaffected, since actual molar concentrations have to be equated, not effective ones. The ionization fractions therefore take the following form:
+
+{16}
+
+$$\chi_i = \frac{\frac{a_{\textrm{H}^+}^i}{K_{a,n}^c \cdot ... \cdot K_{a,n - i + 1}^c}}{\alpha_{\textrm{H}}}$$
+
+$$\alpha_{\textrm{H}} = 1 + \frac{a_{\textrm{H}^+}}{K_{a,n}^c} + \frac{a_{\textrm{H}^+}^2}{K_{a,n}^c \cdot K_{a,n - 1}^c} + ... + \frac{a_{\textrm{H}^+}^n}{K_{a,n}^c \cdot ... \cdot K_{a,1}^c}$$
+
+{17} This results in the following modification for the unified equation:
+
+$$c_B = c_T \cdot (0 \cdot \chi_n + 1 \cdot \chi_{n - 1} + ... + n \cdot \chi_{0}) + \frac{K_w}{a_{\textrm{H}^+} \cdot \gamma_{\textrm{OH}^-}} - \frac{a_{\textrm{H}^+}}{\gamma_{\textrm{H}^+}}$$
+
+-   The same principle applies if dilution during titration is not ignored.
+
+# Lipophilicity
+
+## Column {.tabset}
+
+### Graphs
+
+```{r}
+#| title: Input logP values
+#| content: card-sidebar
+uiOutput("logP")
+```
+
+```{r, height = "500px"}
+plotlyOutput("logDPlot")
+```
+
+```{r}
+#| context: server
+
+output$logP <- renderUI({
+  n <- as.integer(input$n)
+  label_n <- vector(length = n + 1)
+  for(i in n:2) {label_n[n - i + 1] <- i}
+  label_n[n] <- ""
+  label_n[n + 1] <- ""
+  label_H <- vector(length = n + 1)
+  for(i in n:0) {label_H[n - i + 1] <- "H"}
+  label_H[n + 1] <- ""
+  z <- as.integer(input$z)
+  charge <- vector(length = n + 1)
+  for(i in n:0) {
+    if (z - (n - i) > 0) {charge[n - i + 1] <- paste0(z - (n - i), "+")}
+    if (z - (n - i) < 0) {charge[n - i + 1] <- paste0(z - (n - i), "\u2212")}
+    if (z - (n - i) == 0) {charge[n - i + 1] <- paste0("")}
+  }
+  charge <- gsub("1\\+", "+", charge)
+  charge <- gsub("-", "", charge)
+  charge <- gsub("1\u2212", "\u2212", charge)
+  lapply(n:0, function(i) {
+    numericInput(inputId = paste0("logP", i),
+                 label = HTML(paste0("log",
+                                     tags$em("P"),
+                                     tags$sub(i),
+                                     " ",
+                                     "[",
+                                     label_H[n - i + 1],
+                                     tags$sub(label_n[n - i + 1]),
+                                     "A",
+                                     tags$sup(charge[n - i + 1]), "]")),
+                 value = i)
+  })
+})
+
+output$logDPlot <- renderPlotly({
+  n <- n()
+  logP <- c(input$logP0, input$logP1, input$logP2, input$logP3, input$logP4, input$logP5,
+            input$logP6, input$logP7, input$logP8, input$logP9, input$logP10)
+  logP <- na.omit(logP)
+  pH <- pH()
+  X <- X()
+  logD <- log10(X %*% 10^(logP))
+  data <- data.frame(pH = pH, logD = logD)
+  segments <- data.frame(logP = logP)
+  for(i in 0:n) {
+    segments$name[i+1] <- HTML(paste0("log", tags$i("P"), tags$sub(i)))
+  }
+  segments <- segments %>% filter(logP < max(data$logD) + 0.1)
+  segments <- segments %>% filter(logP > min(data$logD) - 0.1)
+  logDPlot <- ggplot(data, aes(x = pH, y = logD)) +
+    geom_segment(aes(x = 0, y = logP, xend = 14, yend = logP), data = segments,
+                 color = "darkgrey", linetype = "dashed") +
+    geom_text(aes(x = 14, y = logP, label = name), data = segments,
+              color = "darkgrey", position = position_jitter(width = 0, height = 0.1)) +
+    geom_line(color = "navy") +
+    labs(x = "pH",
+         y = HTML(paste0("log", tags$i("D")))) +
+    theme_solarized() +
+    scale_x_continuous(breaks = seq(0, 14, 2)) +
+    scale_y_continuous(n.breaks = 5, labels = signs_format())
+  ggplotly(logDPlot)
+})
+```
+
+Lipophilicity is affected by the electrolyte content of the aqueous phase and can be defined for other organic solvents as well. To dive in deeper see this [review](https://doi.org/10.2174/1568026013395100).
+
+### Equations
+
+Compounds with ionizable groups will have apparent partition coefficients ($P_{app}$) (also called distribution coefficient, $D$) at different pH values. In general the true partition coefficient of a protonation species is:
+
+{1}
+
+$$P_i = \frac{[\textrm{H}_{n - i}\textrm{A}^{z - i}]_{octanol}}{[\textrm{H}_{n - i}\textrm{A}^{z - i}]_{water}}$$
+
+{2} The observed distribution coefficient is however:
+
+$$D = \frac{[\textrm{H}_{n}\textrm{A}^{z}]_{octanol} + ... + [\textrm{A}^{z - n}]_{octanol}}{[\textrm{H}_{n}\textrm{A}^{z}]_{water} + ... + [\textrm{A}^{z - n}]_{water}}$$
+
+-   The existence of ionized (charged) species in octanol assumes the presence of protonation/dissociation equilibria in the organic phase.
+-   These organic phase acid-base equilibria can be avoided however, by combining the first two equations and obtaining an expression than only involves aqueous species and equilibria:
+
+{3}
+
+$$D = \frac{P_n + P_{n - 1} \cdot \frac{[\textrm{H}^+]}{K_{a,n}} + P_{n - 2} \cdot \frac{[\textrm{H}^+]^2}{K_{a,n} \cdot K_{a,n-1}} + ... + P_0 \cdot \frac{[\textrm{H}^+]^n}{K_{a,n} \cdot ... \cdot K_{a,1}}}{\alpha_\textrm{H}}$$
+
+-   Note that if the presence of a charged species in the organic phase is ignored, in essence their $P_i$ is taken to be $0$, this however, would result in $\textrm{log}P$ being undefined: for these cases you can give an extremely negative $\textrm{log}P$ (e.g. $-9999$) for the charged species.
+
+# Solubility
+
+## Column {.tabset}
+
+### Graphs
+
+```{r}
+#| title: Input S values
+#| content: card-sidebar
+uiOutput("S")
+```
+
+```{r, height = "500px"}
+plotlyOutput("logSPlot")
+```
+
+```{r}
+#| context: server
+
+output$S <- renderUI({
+  n <- as.integer(input$n)
+  label_n <- vector(length = n + 1)
+  for(i in n:2) {label_n[n - i + 1] <- i}
+  label_n[n] <- ""
+  label_n[n + 1] <- ""
+  label_H <- vector(length = n + 1)
+  for(i in n:0) {label_H[n - i + 1] <- "H"}
+  label_H[n + 1] <- ""
+  z <- as.integer(input$z)
+  charge <- vector(length = n + 1)
+  for(i in n:0) {
+    if (z - (n - i) > 0) {charge[n - i + 1] <- paste0(z - (n - i), "+")}
+    if (z - (n - i) < 0) {charge[n - i + 1] <- paste0(z - (n - i), "\u2212")}
+    if (z - (n - i) == 0) {charge[n - i + 1] <- paste0("")}
+  }
+  charge <- gsub("1\\+", "+", charge)
+  charge <- gsub("-", "", charge)
+  charge <- gsub("1\u2212", "\u2212", charge)
+  lapply(n:0, function(i) {
+    numericInput(inputId = paste0("S", i),
+                 label = HTML(paste0(tags$em("S"),
+                                     tags$sub(i),
+                                     " (mol/L)",
+                                     " ",
+                                     "[",
+                                     label_H[n - i + 1],
+                                     tags$sub(label_n[n - i + 1]),
+                                     "A",
+                                     tags$sup(charge[n - i + 1]), "]")),
+                 value = 0.04*(as.numeric(n) - i + 1) - 0.03,
+                 step = 0.01)
+  })
+})
+
+output$logSPlot <- renderPlotly({
+  nsim <- nsim()
+  n <- n()
+  pKa <- pKa()
+  S <- c(input$S0, input$S1, input$S2, input$S3, input$S4, input$S5,
+         input$S6, input$S7, input$S8, input$S9, input$S10)
+  S <- na.omit(S)
+  pH <- pH()
+  X <- X()
+  array <- array(data = NA, dim = c(nsim, n + 1, n + 1))
+  for(i in 1:nsim) {
+    for(j in 1:(n + 1)) {
+      for(k in 1:(n + 1)) {
+        array[i, j, k] <- S[k]*X[i, j]/X[i, k]
+      }
+    }
+  }
+  check <- array(data = NA, dim = c(nsim, n + 1, n + 1))
+  for(i in 1:nsim) {
+    for(j in 1:(n + 1)) {
+      for(k in 1:(n + 1)) {
+        check[i, j, k] <- (array[i, j, k] <= S[j])
+      }
+    }
+  }
+  S_pH <- vector(length = nsim)
+  for(i in 1:nsim) {
+    for(k in 1:(n + 1)) {
+      if(sum(check[i, , k]) == n + 1) {S_pH[i] <- sum(array[i, , k])}
+    }
+  }
+  data <- data.frame(pH = pH, logS = log10(S_pH))
+  segments <- data.frame(logS = log10(S), x = 14)
+  for(i in 0:n) {
+    segments$name[i + 1] <- HTML(paste0("log", tags$i("S"), tags$sub(i)))
+  }
+  segments <- segments %>% filter(logS < max(data$logS) + 0.1)
+  segments <- segments %>% filter(logS > min(data$logS) - 0.1)
+  if(sum(S == 0) > 0) {
+    segments <- rbind(segments, data.frame(logS = 0,
+                                           x = 7,
+                                           name = HTML(paste0("If the solubility of any species is absolute zero,\n overall solubility will also be zero and log", tags$i("S"), " will be undefined."))))
+  }
+  if(sum(S < 0) > 0) {
+    segments <- rbind(segments, data.frame(logS = 0,
+                                           x = 7,
+                                           name = HTML(paste0("Solubility of a species cannot be negative."))))
+  }
+  logSPlot <- ggplot(data = data, aes(x = pH, y = logS)) +
+    geom_segment(aes(x = 0, y = logS, xend = 14, yend = logS), data = segments,
+                 color = "cornflowerblue", linetype = "dashed") +
+    geom_text(aes(x = x, y = logS, label = name), data = segments,
+              color = "cornflowerblue", position = position_jitter(width = 0, height = 0.1)) +
+    geom_line(color = "goldenrod1") +
+    labs(x = "pH",
+         y = HTML(paste0("log", tags$i("S"), " (from mol/L values)"))) +
+    theme_economist() +
+    scale_x_continuous(breaks = seq(0, 14, 2)) +
+    scale_y_continuous(n.breaks = 5, labels = signs_format())
+  ggplotly(logSPlot)
+})
+```
+
+Solubility is affected by the electrolyte content of the aqueous phase and can be also affected by the polymorphism of the solid compound. To dive in deeper see this [review](https://doi.org/10.2174/1568026013395100).
+
+### Equations
+
+This section demonstrates thermodynamic solubility ($S$) only, which is defined as the concentration of the saturated solution ($c_T$) in equilibrium with the solid compound (here we will ignore the various salt forms of the solid compound and the effect of counterions, since these effects cannot be known *a priori*). At any pH if the compound (or any of its salt forms, theoretically) is brought to equilibrium, the relative abundance of the various protonation species will obey the $K_a$ formulas.
+
+{1}
+
+$$S = c_T = [\textrm{H}_{n}\textrm{A}^{z}] + ... + [\textrm{A}^{z - n}] = S \cdot (\chi_n + ... + \chi_0)$$
+
+Every protonation species $\textrm{H}_{n - i}\textrm{A}^{z - i}$ should have a theoretical limit to its solubility ($S_i$), which limits overall $S$.
+
+Checking one by one whether equating $S \cdot \chi_i = S_i$ keeps all other species concentrations below their allowed threshold affords the correct solubility $S$ value.
+
+# About
+
+::::: card
+::: card-header
+About **pK explorer**
+:::
+
+::: card-body
+This dashboard is a demo of Quarto dashboards and is intended to demonstrate basic acid-base chemistry and related concepts. Although the simulations are carefully designed, this demo may contain mistakes and **does not** come with any warranty, whatsoever.
+
+[Aqion](https://www.aqion.de/) is an online service and software package that allows the comprehensive simulation and calculation of pH and hydrochemistry related quantities. Some of the equations in this demo can be found with detailed explanations in the following [publication](https://www.aqion.de/file/acid-base-systems.pdf). The data used in this dashboard is simulated and manipulated using the [R statistical language](https://www.R-project.org/) in the [R Studio IDE](https://posit.co/download/rstudio-desktop/).
+
+> This dataset and demo is an educational tool for general and physical chemistry. Although a rigorous discussion of the equations is attempted, certain underlying assumptions and simplifications always remain inherent to the framework. Real life experiments of simulated cases may deviate due to experimental conditions or measurement error. Any suggestions or requests are welcome at this [contact](mailto:mirzahosseini.arash@semmelweis.hu).
+>
+> **Disclaimer** - pK explorer (C) 2024 by Arash Mirzahosseini ([Department of Pharmaceutical Chemistry](https://semmelweis.hu/gyogyszereszi-kemia/), Semmelweis University, Budapest) is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/share-your-work/cclicenses/) This license enables reusers to distribute, remix, adapt, and build upon the material in any medium or format for noncommercial purposes only, and only so long as attribution is given to the creator. If you remix, adapt, or build upon the material, you must license the modified material under identical terms.
+:::
+:::::
+
+::::: card
+::: card-header
+About this dashboard
+:::
+
+::: card-body
+This dashboard is built with [Quarto Dashboards](https://quarto.org/docs/dashboards/). The dashboard is updated regularly and published on [Quarto Pubs](https://quartopub.com/).
+
+[<i class="bi bi-github"></i> Source code](https://github.com/mirzahosseini-arash-semmelweis/pK-explorer.git)
+:::
+:::::
